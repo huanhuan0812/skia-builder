@@ -1,0 +1,38 @@
+name: Build Skia
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-14        # Apple Silicon runner
+    steps:
+      - name: Checkout skia
+        run: |
+          git clone --depth 1 https://skia.googlesource.com/skia.git
+          cd skia
+          python3 tools/git-sync-deps
+
+      - name: Install deps
+        run: |
+          brew install ninja
+
+      - name: Build
+        run: |
+          cd skia
+          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_system_freetype2=false skia_use_icu=true'
+          ninja -C out/Release skia
+
+      - name: Package
+        run: |
+          cd skia
+          mkdir -p dist/include dist/lib
+          cp -R include/* dist/include/
+          cp out/Release/libskia.a dist/lib/
+          cd dist
+          tar czf ../skia-macos-arm64.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skia-macos-arm64
+          path: skia/skia-macos-arm64.tar.gz

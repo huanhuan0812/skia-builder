@@ -5,34 +5,47 @@ on:
 
 jobs:
   build-macos-arm64:
-    runs-on: macos-14        # Apple Silicon runner
+    runs-on: macos-14
     steps:
       - name: Checkout skia
         run: |
+          set -e
           git clone --depth 1 https://skia.googlesource.com/skia.git
           cd skia
           python3 tools/git-sync-deps
 
-      - name: Install deps
-        run: |
-          brew install ninja
+      - name: Install ninja
+        run: brew install ninja
 
-      - name: Build
+      - name: Show partition_alloc args
         run: |
           cd skia
-          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_system_freetype2=false skia_use_icu=true'
+          bin/gn args out/Release --list 2>/dev/null | grep -i -A2 partition || true
+
+      - name: Generate build files
+        run: |
+          set -e
+          cd skia
+          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true skia_enable_partition_alloc=false'
+
+      - name: Build skia
+        run: |
+          set -e
+          cd skia
           ninja -C out/Release skia
 
       - name: Package
         run: |
+          set -e
           cd skia
           mkdir -p dist/include dist/lib
           cp -R include/* dist/include/
           cp out/Release/libskia.a dist/lib/
-          cd dist
-          tar czf ../skia-macos-arm64.tar.gz .
+          tar czf skia-macos-arm64.tar.gz -C dist .
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: skia-macos-arm64
           path: skia/skia-macos-arm64.tar.gz
+          if-no-files-found: error

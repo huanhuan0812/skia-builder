@@ -15,21 +15,53 @@ jobs:
           cd skia
           python3 tools/git-sync-deps
 
-      - name: Install ninja
-        run: brew install ninja
+      - name: Install system libraries and tools
+        run: |
+          set -e
+          brew update
+          brew install ninja pkg-config \
+            libpng libwebp jpeg-turbo freetype harfbuzz icu4c zlib expat
 
-      - name: List relevant gn args
+      - name: Setup pkg-config path
+        run: |
+          {
+            echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/libpng/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/libwebp/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/jpeg-turbo/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/freetype/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/harfbuzz/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/icu4c/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/zlib/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/expat/lib/pkgconfig"
+          } >> $GITHUB_ENV
+
+      - name: Verify pkg-config finds libs
+        run: |
+          pkg-config --modversion libpng
+          pkg-config --modversion libwebp
+          pkg-config --modversion libjpeg
+          pkg-config --modversion freetype2
+          pkg-config --modversion harfbuzz
+          pkg-config --modversion icu-uc
+          pkg-config --modversion zlib
+          pkg-config --modversion expat
+
+      - name: Inspect skia deps and gn args
         run: |
           cd skia
+          echo "=== externals ==="
+          ls third_party/externals/ | head -50
+          echo "=== gn args list (filtered) ==="
           bin/gn args out/Release --list 2>/dev/null \
-            | grep -i -E "libpng|png|jpeg|zlib|freetype|harfbuzz|partition" \
-            || echo "no match"
+            | grep -i -E "webp|png|jpeg|zlib|freetype|harfbuzz|icu|system|use_" \
+            | head -100 || echo "no match"
 
       - name: Generate build files
         run: |
           set -e
           cd skia
-          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true skia_use_system_libpng=false skia_use_system_libjpeg_turbo=false skia_use_system_zlib=false skia_use_system_freetype2=false skia_use_system_harfbuzz=false'
+          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true'
 
       - name: Build skia
         run: |

@@ -61,8 +61,7 @@ jobs:
         run: |
           set -e
           cd skia
-          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true'
-
+          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true extra_cflags=["-I/opt/homebrew/include","-I/opt/homebrew/opt/libpng/include","-I/opt/homebrew/opt/webp/include","-I/opt/homebrew/opt/jpeg-turbo/include","-I/opt/homebrew/opt/freetype/include/freetype2","-I/opt/homebrew/opt/harfbuzz/include","-I/opt/homebrew/opt/icu4c/include","-I/opt/homebrew/opt/zlib/include","-I/opt/homebrew/opt/expat/include"] extra_ldflags=["-L/opt/homebrew/lib","-L/opt/homebrew/opt/libpng/lib","-L/opt/homebrew/opt/webp/lib","-L/opt/homebrew/opt/jpeg-turbo/lib","-L/opt/homebrew/opt/freetype/lib","-L/opt/homebrew/opt/harfbuzz/lib","-L/opt/homebrew/opt/icu4c/lib","-L/opt/homebrew/opt/zlib/lib","-L/opt/homebrew/opt/expat/lib"]'
       - name: Build skia
         run: |
           set -e

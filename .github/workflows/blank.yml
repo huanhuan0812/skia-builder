@@ -29,15 +29,7 @@ jobs:
         run: |
           set -e
           cd skia
-          bin/gn gen out/Release --args='is_official_build=true \
-            skia_use_gl=true \
-            skia_use_metal=true \
-            skia_use_icu=true \
-            skia_use_system_libpng=false \
-            skia_use_system_libjpeg_turbo=false \
-            skia_use_system_zlib=false \
-            skia_use_system_freetype2=false \
-            skia_use_system_harfbuzz=false'
+          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true skia_use_system_libpng=false skia_use_system_libjpeg_turbo=false skia_use_system_zlib=false skia_use_system_freetype2=false skia_use_system_harfbuzz=false'
 
       - name: Build skia
         run: |

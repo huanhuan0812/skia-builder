@@ -15,7 +15,8 @@ jobs:
           python3 tools/git-sync-deps
 
       - name: Install ninja
-        run: brew install ninja
+        run: |
+          brew install ninja libpng
 
       - name: Show partition_alloc args
         run: |

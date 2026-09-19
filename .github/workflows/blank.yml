@@ -20,14 +20,14 @@ jobs:
           set -e
           brew update
           brew install ninja pkg-config \
-            libpng libwebp jpeg-turbo freetype harfbuzz icu4c zlib expat
+            libpng webp jpeg-turbo freetype harfbuzz icu4c zlib expat
 
       - name: Setup pkg-config path
         run: |
           {
             echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig"
             echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/libpng/lib/pkgconfig"
-            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/libwebp/lib/pkgconfig"
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/webp/lib/pkgconfig"
             echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/jpeg-turbo/lib/pkgconfig"
             echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/freetype/lib/pkgconfig"
             echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/homebrew/opt/harfbuzz/lib/pkgconfig"
@@ -38,6 +38,7 @@ jobs:
 
       - name: Verify pkg-config finds libs
         run: |
+          set -e
           pkg-config --modversion libpng
           pkg-config --modversion libwebp
           pkg-config --modversion libjpeg

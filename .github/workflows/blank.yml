@@ -128,10 +128,14 @@ jobs:
           set -e
           cd skia
           if [ "${{ matrix.linkage }}" = "static" ]; then
-            ninja -C out/Static skia
+            OUT=out/Static
           else
-            ninja -C out/Shared skia skia_shared
+            OUT=out/Shared
           fi
+          # 诊断：列出所有 skia 相关目标（便于确认目标名）
+          ninja -C $OUT -t targets all | grep -i skia | head -50 || true
+          # 统一 build skia；静态=libskia.a，动态=libskia.dylib / skia.dll / libskia.so
+          ninja -C $OUT skia
 
       - name: Package
         if: steps.skip.outputs.skip != 'true'
@@ -159,6 +163,7 @@ jobs:
             echo "Skia commit: $(git rev-parse HEAD)"
             echo "Linkage: $LINKAGE"
             echo "Arch: $ARCH"
+            echo "GN args: is_official_build=true is_component_build=$([ "$LINKAGE" = "shared" ] && echo true || echo false)"
           } > dist/BUILD_INFO.txt
           tar czf $ART.tar.gz -C dist .
 
@@ -241,9 +246,9 @@ jobs:
             COMPONENT=true;  OUT=out/Shared
           fi
 
-          # 方案 A：不传 win_vc，让 Skia 从环境变量（ilammy/msvc-dev-cmd 已设置
-          # INCLUDE/LIB/PATH）自动探测 MSVC 工具链。
-          # 这样避免了 $VCToolsInstallDir 尾部反斜杠导致的 GN 字符串转义问题。
+          # 方案 A：不传 win_vc。ilammy/msvc-dev-cmd 已注入 INCLUDE/LIB/PATH，
+          # Skia 的 gn gen 会自动探测 MSVC 工具链。
+          # 避免 $VCToolsInstallDir 尾部反斜杠导致的 GN 字符串转义问题。
           echo "VCToolsInstallDir(raw) = ${VCToolsInstallDir:-<unset>}"
 
           bin/gn gen $OUT --args="
@@ -273,10 +278,14 @@ jobs:
           set -e
           cd skia
           if [ "${{ matrix.linkage }}" = "static" ]; then
-            ninja -C out/Static skia
+            OUT=out/Static
           else
-            ninja -C out/Shared skia skia_shared
+            OUT=out/Shared
           fi
+          # 诊断：列出所有 skia 相关目标
+          ninja -C $OUT -t targets all | grep -i skia | head -50 || true
+          # 统一 build skia；静态=skia.lib，动态=skia.dll + skia.lib(导入库)
+          ninja -C $OUT skia
 
       - name: Package
         if: steps.skip.outputs.skip != 'true'
@@ -296,7 +305,7 @@ jobs:
           if [ "$LINKAGE" = "static" ]; then
             cp $OUT/skia.lib dist/lib/
           else
-            # 动态库 + 导入库，以及所有依赖 DLL
+            # 动态库 + 导入库，以及所有依赖 DLL（libpng/zlib/icu 等）
             cp $OUT/*.dll dist/lib/ 2>/dev/null || true
             cp $OUT/*.lib dist/lib/ 2>/dev/null || true
           fi
@@ -406,10 +415,14 @@ jobs:
           set -e
           cd skia
           if [ "${{ matrix.linkage }}" = "static" ]; then
-            ninja -C out/Static skia
+            OUT=out/Static
           else
-            ninja -C out/Shared skia skia_shared
+            OUT=out/Shared
           fi
+          # 诊断：列出所有 skia 相关目标
+          ninja -C $OUT -t targets all | grep -i skia | head -50 || true
+          # 统一 build skia；静态=libskia.a，动态=libskia.so
+          ninja -C $OUT skia
 
       - name: Package
         if: steps.skip.outputs.skip != 'true'
@@ -428,6 +441,7 @@ jobs:
           if [ "$LINKAGE" = "static" ]; then
             cp $OUT/libskia.a dist/lib/
           else
+            # 动态库及所有依赖 .so
             cp $OUT/*.so* dist/lib/ 2>/dev/null || true
           fi
           {

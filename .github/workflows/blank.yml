@@ -2,65 +2,441 @@ name: Build Skia
 
 on:
   workflow_dispatch:
+    inputs:
+      skia_ref:
+        description: "Skia git ref (branch/tag/commit). Empty = default branch"
+        required: false
+        default: ""
+
+      # ---- 平台选择 ----
+      build_macos:
+        description: "Build macOS"
+        type: boolean
+        default: true
+      build_windows:
+        description: "Build Windows (MSVC)"
+        type: boolean
+        default: true
+      build_linux:
+        description: "Build Linux"
+        type: boolean
+        default: true
+
+      # ---- 架构选择 ----
+      macos_arch:
+        description: "macOS architecture"
+        type: choice
+        options: [arm64, x64, both]
+        default: arm64
+      windows_arch:
+        description: "Windows architecture"
+        type: choice
+        options: [x64, arm64, both]
+        default: x64
+      linux_arch:
+        description: "Linux architecture"
+        type: choice
+        options: [x64, arm64, both]
+        default: x64
+
+      # ---- 链接方式 ----
+      linkage:
+        description: "Library linkage"
+        type: choice
+        options: [static, shared, both]
+        default: both
 
 jobs:
-  build-macos-arm64:
+  # =========================================================
+  # macOS
+  # =========================================================
+  build-macos:
+    name: macOS ${{ matrix.arch }} ${{ matrix.linkage }}
+    if: ${{ inputs.build_macos }}
     runs-on: macos-26
-
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+        linkage: [static, shared]
     steps:
-      - name: Checkout skia
+      # 跳过未选中的架构 / 链接方式
+      - name: Skip check
+        id: skip
         run: |
           set -e
-          git clone --depth 1 https://skia.googlesource.com/skia.git
-          cd skia
+          ARCH="${{ matrix.arch }}"
+          LINKAGE="${{ matrix.linkage }}"
+          SEL_ARCH="${{ inputs.macos_arch }}"
+          SEL_LINK="${{ inputs.linkage }}"
+          SKIP=false
+          if [ "$SEL_ARCH" != "both" ] && [ "$ARCH" != "$SEL_ARCH" ]; then SKIP=true; fi
+          if [ "$SEL_LINK" != "both" ] && [ "$LINKAGE" != "$SEL_LINK" ]; then SKIP=true; fi
+          echo "skip=$SKIP" >> $GITHUB_OUTPUT
+          echo "Skipping=$SKIP (arch=$ARCH linkage=$LINKAGE sel_arch=$SEL_ARCH sel_link=$SEL_LINK)"
+
+      - name: Checkout skia
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          REF="${{ inputs.skia_ref }}"
+          if [ -n "$REF" ]; then
+            git clone https://skia.googlesource.com/skia.git
+            cd skia
+            git checkout "$REF"
+          else
+            git clone --depth 1 https://skia.googlesource.com/skia.git
+            cd skia
+          fi
           python3 tools/git-sync-deps
 
-      - name: Verify externals
-        run: |
-          cd skia
-          ls third_party/externals/
-          for d in libpng libwebp libjpeg-turbo zlib freetype harfbuzz icu expat; do
-            if [ -d "third_party/externals/$d" ]; then
-              echo "OK: $d"
-            else
-              echo "MISSING: $d"
-            fi
-          done
-
       - name: Install ninja
+        if: steps.skip.outputs.skip != 'true'
         run: brew install ninja
 
-      - name: Generate build files
+      - name: GN gen (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
         run: |
           set -e
           cd skia
-          bin/gn gen out/Release --args='is_official_build=true skia_use_gl=true skia_use_metal=true skia_use_icu=true skia_use_system_libpng=false skia_use_system_libwebp=false skia_use_system_libjpeg_turbo=false skia_use_system_harfbuzz=false skia_use_system_zlib=false skia_use_system_expat=false skia_use_system_freetype2=false skia_use_system_icu=false'
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            COMPONENT=false; OUT=out/Static
+          else
+            COMPONENT=true;  OUT=out/Shared
+          fi
+          bin/gn gen $OUT --args="
+            is_official_build=true
+            is_component_build=$COMPONENT
+            skia_use_gl=true
+            skia_use_metal=true
+            skia_use_icu=true
+            skia_use_system_libpng=false
+            skia_use_system_libwebp=false
+            skia_use_system_libjpeg_turbo=false
+            skia_use_system_harfbuzz=false
+            skia_use_system_zlib=false
+            skia_use_system_expat=false
+            skia_use_system_freetype2=false
+            skia_use_system_icu=false
+            target_cpu=\"$ARCH\"
+          "
 
-      - name: Build skia
+      - name: Build skia (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
         run: |
           set -e
           cd skia
-          ninja -C out/Release skia
+          if [ "${{ matrix.linkage }}" = "static" ]; then
+            ninja -C out/Static skia
+          else
+            ninja -C out/Shared skia skia_shared
+          fi
 
       - name: Package
+        if: steps.skip.outputs.skip != 'true'
         run: |
           set -e
           cd skia
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            OUT=out/Static;  ART=skia-macos-${ARCH}-static
+          else
+            OUT=out/Shared;  ART=skia-macos-${ARCH}-shared
+          fi
           mkdir -p dist/include dist/lib
           cp -R include/* dist/include/
-          cp out/Release/libskia.a dist/lib/
+          if [ "$LINKAGE" = "static" ]; then
+            cp $OUT/libskia.a dist/lib/
+          else
+            cp $OUT/libskia.dylib dist/lib/ 2>/dev/null || true
+            cp $OUT/libskia.*.dylib dist/lib/ 2>/dev/null || true
+          fi
           {
             echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Runner: ${{ runner.os }} ${{ runner.arch }}"
             echo "Skia commit: $(git rev-parse HEAD)"
-            echo "GN args: is_official_build=true with skia_use_system_*=false (bundled externals)"
-            echo "Target: arm64-apple-macos11"
+            echo "Linkage: $LINKAGE"
+            echo "Arch: $ARCH"
           } > dist/BUILD_INFO.txt
-          tar czf skia-macos-arm64.tar.gz -C dist .
+          tar czf $ART.tar.gz -C dist .
 
       - name: Upload artifact
+        if: steps.skip.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: skia-macos-arm64
-          path: skia/skia-macos-arm64.tar.gz
+          name: skia-macos-${{ matrix.arch }}-${{ matrix.linkage }}
+          path: skia/skia-macos-${{ matrix.arch }}-${{ matrix.linkage }}.tar.gz
+          if-no-files-found: error
+
+  # =========================================================
+  # Windows
+  # =========================================================
+  build-windows:
+    name: Windows ${{ matrix.arch }} ${{ matrix.linkage }}
+    if: ${{ inputs.build_windows }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        linkage: [static, shared]
+    steps:
+      - name: Skip check
+        id: skip
+        shell: bash
+        run: |
+          set -e
+          ARCH="${{ matrix.arch }}"
+          LINKAGE="${{ matrix.linkage }}"
+          SEL_ARCH="${{ inputs.windows_arch }}"
+          SEL_LINK="${{ inputs.linkage }}"
+          SKIP=false
+          if [ "$SEL_ARCH" != "both" ] && [ "$ARCH" != "$SEL_ARCH" ]; then SKIP=true; fi
+          if [ "$SEL_LINK" != "both" ] && [ "$LINKAGE" != "$SEL_LINK" ]; then SKIP=true; fi
+          echo "skip=$SKIP" >> $GITHUB_OUTPUT
+          echo "Skipping=$SKIP"
+
+      - name: Checkout skia
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -e
+          REF="${{ inputs.skia_ref }}"
+          if [ -n "$REF" ]; then
+            git clone https://skia.googlesource.com/skia.git
+            cd skia
+            git checkout "$REF"
+          else
+            git clone --depth 1 https://skia.googlesource.com/skia.git
+            cd skia
+          fi
+          python3 tools/git-sync-deps
+
+      - name: Install ninja
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          choco install ninja -y
+          echo "$(cygpath -u 'C:\ProgramData\chocolatey\bin')" >> $GITHUB_PATH
+
+      - name: Setup MSVC (${{ matrix.arch }})
+        if: steps.skip.outputs.skip != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}
+
+      - name: GN gen (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -e
+          cd skia
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            COMPONENT=false; OUT=out/Static
+          else
+            COMPONENT=true;  OUT=out/Shared
+          fi
+          bin/gn gen $OUT --args="
+            is_official_build=true
+            is_component_build=$COMPONENT
+            is_clang=true
+            clang_use_chrome_plugins=false
+            skia_use_gl=false
+            skia_use_metal=false
+            skia_use_direct3d=true
+            skia_use_icu=true
+            skia_use_system_libpng=false
+            skia_use_system_libwebp=false
+            skia_use_system_libjpeg_turbo=false
+            skia_use_system_harfbuzz=false
+            skia_use_system_zlib=false
+            skia_use_system_expat=false
+            skia_use_system_freetype2=false
+            skia_use_system_icu=false
+            target_cpu=\"$ARCH\"
+            win_vc=\"$VCToolsInstallDir\"
+          "
+
+      - name: Build skia (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -e
+          cd skia
+          if [ "${{ matrix.linkage }}" = "static" ]; then
+            ninja -C out/Static skia
+          else
+            ninja -C out/Shared skia skia_shared
+          fi
+
+      - name: Package
+        if: steps.skip.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -e
+          cd skia
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            OUT=out/Static;  ART=skia-windows-${ARCH}-static
+          else
+            OUT=out/Shared;  ART=skia-windows-${ARCH}-shared
+          fi
+          mkdir -p dist/include dist/lib
+          cp -R include/* dist/include/
+          if [ "$LINKAGE" = "static" ]; then
+            cp $OUT/skia.lib dist/lib/
+          else
+            cp $OUT/*.dll dist/lib/ 2>/dev/null || true
+            cp $OUT/*.lib dist/lib/ 2>/dev/null || true
+          fi
+          {
+            echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Runner: ${{ runner.os }} ${{ runner.arch }}"
+            echo "Skia commit: $(git rev-parse HEAD)"
+            echo "Linkage: $LINKAGE"
+            echo "Arch: $ARCH"
+          } > dist/BUILD_INFO.txt
+          tar czf $ART.tar.gz -C dist .
+
+      - name: Upload artifact
+        if: steps.skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: skia-windows-${{ matrix.arch }}-${{ matrix.linkage }}
+          path: skia/skia-windows-${{ matrix.arch }}-${{ matrix.linkage }}.tar.gz
+          if-no-files-found: error
+
+  # =========================================================
+  # Linux
+  # =========================================================
+  build-linux:
+    name: Linux ${{ matrix.arch }} ${{ matrix.linkage }}
+    if: ${{ inputs.build_linux }}
+    runs-on: ${{ matrix.arch == 'x64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        linkage: [static, shared]
+    steps:
+      - name: Skip check
+        id: skip
+        run: |
+          set -e
+          ARCH="${{ matrix.arch }}"
+          LINKAGE="${{ matrix.linkage }}"
+          SEL_ARCH="${{ inputs.linux_arch }}"
+          SEL_LINK="${{ inputs.linkage }}"
+          SKIP=false
+          if [ "$SEL_ARCH" != "both" ] && [ "$ARCH" != "$SEL_ARCH" ]; then SKIP=true; fi
+          if [ "$SEL_LINK" != "both" ] && [ "$LINKAGE" != "$SEL_LINK" ]; then SKIP=true; fi
+          echo "skip=$SKIP" >> $GITHUB_OUTPUT
+          echo "Skipping=$SKIP"
+
+      - name: Checkout skia
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          REF="${{ inputs.skia_ref }}"
+          if [ -n "$REF" ]; then
+            git clone https://skia.googlesource.com/skia.git
+            cd skia
+            git checkout "$REF"
+          else
+            git clone --depth 1 https://skia.googlesource.com/skia.git
+            cd skia
+          fi
+          python3 tools/git-sync-deps
+
+      - name: Install deps
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld \
+            libfontconfig1-dev libgl1-mesa-dev python3 python3-pip
+          pip3 install --user ninja 2>/dev/null || true
+
+      - name: GN gen (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          cd skia
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            COMPONENT=false; OUT=out/Static
+          else
+            COMPONENT=true;  OUT=out/Shared
+          fi
+          bin/gn gen $OUT --args="
+            is_official_build=true
+            is_component_build=$COMPONENT
+            is_clang=true
+            clang_use_chrome_plugins=false
+            skia_use_gl=true
+            skia_use_metal=false
+            skia_use_icu=true
+            skia_use_system_libpng=false
+            skia_use_system_libwebp=false
+            skia_use_system_libjpeg_turbo=false
+            skia_use_system_harfbuzz=false
+            skia_use_system_zlib=false
+            skia_use_system_expat=false
+            skia_use_system_freetype2=false
+            skia_use_system_icu=false
+            target_cpu=\"$ARCH\"
+          "
+
+      - name: Build skia (${{ matrix.linkage }})
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          cd skia
+          if [ "${{ matrix.linkage }}" = "static" ]; then
+            ninja -C out/Static skia
+          else
+            ninja -C out/Shared skia skia_shared
+          fi
+
+      - name: Package
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          set -e
+          cd skia
+          LINKAGE="${{ matrix.linkage }}"
+          ARCH="${{ matrix.arch }}"
+          if [ "$LINKAGE" = "static" ]; then
+            OUT=out/Static;  ART=skia-linux-${ARCH}-static
+          else
+            OUT=out/Shared;  ART=skia-linux-${ARCH}-shared
+          fi
+          mkdir -p dist/include dist/lib
+          cp -R include/* dist/include/
+          if [ "$LINKAGE" = "static" ]; then
+            cp $OUT/libskia.a dist/lib/
+          else
+            cp $OUT/*.so* dist/lib/ 2>/dev/null || true
+          fi
+          {
+            echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Runner: ${{ runner.os }} ${{ runner.arch }}"
+            echo "Skia commit: $(git rev-parse HEAD)"
+            echo "Linkage: $LINKAGE"
+            echo "Arch: $ARCH"
+          } > dist/BUILD_INFO.txt
+          tar czf $ART.tar.gz -C dist .
+
+      - name: Upload artifact
+        if: steps.skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: skia-linux-${{ matrix.arch }}-${{ matrix.linkage }}
+          path: skia/skia-linux-${{ matrix.arch }}-${{ matrix.linkage }}.tar.gz
           if-no-files-found: error

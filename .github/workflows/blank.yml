@@ -60,7 +60,6 @@ jobs:
         arch: [arm64, x64]
         linkage: [static, shared]
     steps:
-      # 跳过未选中的架构 / 链接方式
       - name: Skip check
         id: skip
         run: |
@@ -241,6 +240,12 @@ jobs:
           else
             COMPONENT=true;  OUT=out/Shared
           fi
+
+          # 方案 A：不传 win_vc，让 Skia 从环境变量（ilammy/msvc-dev-cmd 已设置
+          # INCLUDE/LIB/PATH）自动探测 MSVC 工具链。
+          # 这样避免了 $VCToolsInstallDir 尾部反斜杠导致的 GN 字符串转义问题。
+          echo "VCToolsInstallDir(raw) = ${VCToolsInstallDir:-<unset>}"
+
           bin/gn gen $OUT --args="
             is_official_build=true
             is_component_build=$COMPONENT
@@ -259,7 +264,6 @@ jobs:
             skia_use_system_freetype2=false
             skia_use_system_icu=false
             target_cpu=\"$ARCH\"
-            win_vc=\"$VCToolsInstallDir\"
           "
 
       - name: Build skia (${{ matrix.linkage }})
@@ -292,6 +296,7 @@ jobs:
           if [ "$LINKAGE" = "static" ]; then
             cp $OUT/skia.lib dist/lib/
           else
+            # 动态库 + 导入库，以及所有依赖 DLL
             cp $OUT/*.dll dist/lib/ 2>/dev/null || true
             cp $OUT/*.lib dist/lib/ 2>/dev/null || true
           fi
@@ -301,6 +306,7 @@ jobs:
             echo "Skia commit: $(git rev-parse HEAD)"
             echo "Linkage: $LINKAGE"
             echo "Arch: $ARCH"
+            echo "GN args: is_official_build=true is_component_build=$([ "$LINKAGE" = "shared" ] && echo true || echo false) is_clang=true"
           } > dist/BUILD_INFO.txt
           tar czf $ART.tar.gz -C dist .
 
@@ -430,6 +436,7 @@ jobs:
             echo "Skia commit: $(git rev-parse HEAD)"
             echo "Linkage: $LINKAGE"
             echo "Arch: $ARCH"
+            echo "GN args: is_official_build=true is_component_build=$([ "$LINKAGE" = "shared" ] && echo true || echo false) is_clang=true"
           } > dist/BUILD_INFO.txt
           tar czf $ART.tar.gz -C dist .
 
@@ -440,3 +447,24 @@ jobs:
           name: skia-linux-${{ matrix.arch }}-${{ matrix.linkage }}
           path: skia/skia-linux-${{ matrix.arch }}-${{ matrix.linkage }}.tar.gz
           if-no-files-found: error
+
+  # =========================================================
+  # 汇总
+  # =========================================================
+  summary:
+    name: Summary
+    needs: [build-macos, build-windows, build-linux]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## Skia build summary"
+            echo ""
+            echo "| Platform | Result |"
+            echo "|----------|--------|"
+            echo "| macOS    | ${{ needs.build-macos.result }} |"
+            echo "| Windows  | ${{ needs.build-windows.result }} |"
+            echo "| Linux    | ${{ needs.build-linux.result }} |"
+          } >> $GITHUB_STEP_SUMMARY
